@@ -1,35 +1,67 @@
 # mcp-agent-sla
 
-MCP server for Agent Failure-Recovery SLA - SLA terms, compliance checking, credit history, adversarial testing.
+MCP server for the **Agent Failure-Recovery SLA Subscription** - contractual guarantees for
+agent failures with measurable detection-to-recovery windows, credits that self-execute in the
+billing token, adversarial test rights, and a watcher-heartbeat clause.
 
 ## Tools
 
-### get_sla_terms
-Get SLA terms for a tier (basic, professional, enterprise).
+### `get_sla_terms`
+Quote the SLA terms for a tier.
 
-**Parameters:**
-- `tier` (string, optional): SLA tier - "basic", "professional", or "enterprise"
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `tier` | string enum `base`/`standard`/`desk` | `base` | Tier to quote |
+| `include_credit_schedule` | boolean | `true` | Include per-severity credit schedule and monthly cap |
+| `include_history` | boolean | `false` | Also return persisted credit history |
 
-### check_sla_compliance
-Check SLA compliance for an agent over a period.
+Returns the four-clause boilerplate, tier windows (ack + recovery), credit schedule with
+severity multipliers and monthly cap, heartbeat threshold, and a comparison of all tiers.
 
-**Parameters:**
-- `agent_id` (string, required): Agent identifier
-- `period_days` (integer, optional): Period in days (default: 30)
+### `check_sla_compliance`
+Evaluate incident records against a tier's recovery window and compute self-executing credits.
 
-### get_credit_history
-Get SLA credit history for an agent.
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `incidents` | array of object (**required**) | - | `{id, service, severity, detected_at, recovered_at, notes}` |
+| `tier` | string enum | `base` | SLA tier |
+| `account_id` | string | `acct-default` | Account credits are issued against |
+| `monthly_fee_usd` | number | tier default | Actual billed fee for the period |
+| `persist` | boolean | `true` | Persist incidents and credit events |
 
-**Parameters:**
-- `agent_id` (string, required): Agent identifier
-- `months` (integer, optional): Months of history (default: 6)
+Recovery time is measured operator-side detection to restoration of last-known-good behaviour.
+Credits are proportional (`credit_pct_per_breach` x severity multiplier) and capped at the tier
+monthly cap. Each credit carries a `billing_token_execution` block - it self-executes, no email
+negotiation.
 
-### run_adversarial_test
-Run adversarial test on an agent (chaos engineering).
+### `get_credit_history`
+The credit ledger. Parameters: `account_id`, `tier`, `limit` (default 50).
 
-**Parameters:**
-- `agent_id` (string, required): Agent identifier
-- `test_type` (string, required): Test type - "chaos_network_partition", "chaos_cpu_stress", "chaos_memory_pressure", "chaos_disk_failure", "chaos_dependency_failure"
+### `set_alert_threshold`
+Configure heartbeat escalation and alerting. Parameters: `watcher_heartbeat_gap_minutes`,
+`auto_escalate_on_miss`, `notify_email`, `recovery_window_minutes` + `apply_to_tier`.
+
+### `get_post_mortem_history`
+Public post-mortems including misses. Parameters: `account_id`, `tier`, `include_misses_only`,
+`limit`.
+
+### `run_adversarial_test`
+Execute an adversarial test. Parameters: `account_id`, `tier`, `scenario_id` (omit for rotation),
+`seed` (reproducible), `window_announced` (default `false`), `monthly_fee_usd`, `persist`.
+
+Goodhart controls are returned in `run.goodhart_controls`: scenarios rotate through an 8-scenario
+catalogue, windows are unannounced by default, and no scenario is replayed verbatim inside the
+rotation window. A miss self-executes a credit and publishes a post-mortem.
+
+## Tiers
+
+| Tier | Recovery window | Ack window | Credit/breach | Monthly cap | Fee |
+|---|---|---|---|---|---|
+| base | 240 min | 60 min | 5% | 30% | $250 |
+| standard | 120 min | 30 min | 7% | 40% | $400 |
+| desk | 45 min | 10 min | 10% | 50% | $650 |
+
+Severity multipliers: sev1 x1.5, sev2 x1.0, sev3 x0.5.
 
 ## Installation
 
@@ -43,17 +75,17 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## Connecting to Claude Desktop
+State is persisted as JSON in `./state/sla_state.json`. Override the location with
+`MCP_AGENT_SLA_STATE_DIR`.
 
-Add to your `claude_desktop_config.json`:
+## Connecting to an MCP client
 
 ```json
 {
   "mcpServers": {
     "agent-sla": {
-      "command": "python",
-      "args": ["/path/to/mcp-agent-sla/main.py"],
-      "cwd": "/path/to/mcp-agent-sla"
+      "command": "python3",
+      "args": ["/tmp/v3-services/mcp-agent-sla/main.py"]
     }
   }
 }
